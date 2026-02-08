@@ -1,5 +1,6 @@
 import os
-import google.generativeai as genai
+from google import genai
+from google.genai import types
 from dotenv import load_dotenv
 from src.inventario import InventarioService
 
@@ -13,13 +14,15 @@ class Brain:
         self.sesiones = {} 
         
         if self.api_key:
-            genai.configure(api_key=self.api_key)
             try:
-                self.model = genai.GenerativeModel('gemini-pro')
-            except:
-                self.model = genai.GenerativeModel('gemini-1.5-flash')
+                self.client = genai.Client(api_key=self.api_key)
+                self.model = None  # Se usará client.models.generate_content directamente
+                print("✅ Cliente Gemini inicializado")
+            except Exception as e:
+                print(f"⚠️ Error cargando Gemini: {e}")
+                self.client = None
         else:
-            self.model = None
+            self.client = None
 
     def _get_session(self, telefono):
         if telefono not in self.sesiones:
@@ -67,22 +70,20 @@ class Brain:
             resultados = self.inventario.buscar_producto(producto_detectado)
             
             if resultados:
-                respuesta = f"🔍 **Resultados para '{producto_detectado}':**\n"
-                for p in resultados:
-                    precio = p.get('precio', 0)
+                respuesta = f"🔍 **Encontré estos productos:**\n\n"
+                for p in resultados[:5]:  # Limitar a 5 resultados
+                    referencia = p.get('referencia', 'N/A')
                     nombre = p.get('nombre', 'Producto')
-                    stock = p.get('stock', 0)
-                    estado_prod = "✅ Disponible" if int(stock) > 0 else "❌ Agotado"
-                    try:
-                        respuesta += f"- {nombre}: ${float(precio):,.0f} ({estado_prod})\n"
-                    except:
-                        respuesta += f"- {nombre}: ${precio} ({estado_prod})\n"
+                    respuesta += f"📦 *{nombre}*\n   Ref: {referencia}\n\n"
                 
-                respuesta += "\n🛒 Si quieres alguno, responde **'Comprar [Nombre]'**."
-                session['temp_producto'] = f"Interés en: {producto_detectado}"
+                respuesta += "💰 Para consultar precios y disponibilidad, escribe *'Comprar [nombre del producto]'* o llama al 3209891720."
+                session['temp_producto'] = f"{producto_detectado}"
                 return respuesta
+            else:
+                # No se encontró, dejar que la IA responda
+                pass
 
-        if self.model:
+        if self.client:
             try:
                 prompt_sistema = (
                     "Eres un asistente de ventas amable para 'Electrodomésticos LAGOBO'. "
@@ -90,7 +91,10 @@ class Brain:
                     "Si quieren comprar, diles que escriban 'comprar'. "
                     "Sé conciso y usa emojis. El numero de contacto es 3209891720."
                 )
-                response = self.model.generate_content(f"{prompt_sistema}\nUsuario: {mensaje_usuario}")
+                response = self.client.models.generate_content(
+                    model='gemini-2.0-flash-exp',
+                    contents=f"{prompt_sistema}\nUsuario: {mensaje_usuario}"
+                )
                 return response.text
             except Exception as e:
                 print(f"⚠️ Error IA: {e}")

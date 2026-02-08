@@ -17,7 +17,7 @@ class InventarioService:
                 self.creds = ServiceAccountCredentials.from_json_keyfile_name(self.creds_file, self.scope)
                 self.client = gspread.authorize(self.creds)
                 # Intenta abrir la hoja usando el ID proporcionado
-                SPREADSHEET_ID = "1_QjU1lB_5M5go5A6KU2bgpUcA7k3KPvAYDj4EILxbpo"
+                SPREADSHEET_ID = "1iZ0viBh34WIQc_Pq6Zqm0kthaC766wa3bslNvyLe0xU"
                 self.doc = self.client.open_by_key(SPREADSHEET_ID)
                 self.sheet = self.doc.sheet1 
                 print("✅ Conexión exitosa con Google Sheets (LAGOBO)")
@@ -47,26 +47,64 @@ class InventarioService:
         if self.usando_backup:
             return self.productos_backup
         try:
-            # Obtener todos los registros del sheet
-            registros = self.sheet.get_all_records()
-            return registros
+            # Obtener todos los valores desde la hoja
+            all_values = self.sheet.get_all_values()
+            if not all_values or len(all_values) < 2:
+                return []
+            
+            headers = all_values[0]
+            productos = []
+            
+            for row in all_values[1:]:  
+                if len(row) >= 2 and row[0] and row[1]:  
+                    productos.append({
+                        'referencia': row[0].strip(),
+                        'nombre': row[1].strip()
+                    })
+            
+            print(f"DEBUG: Leídos {len(productos)} productos del Sheet")
+            return productos
         except Exception as e:
             print(f"Error leyendo Sheet: {e}")
+            import traceback
+            traceback.print_exc()
             return []
 
     def buscar_producto(self, consulta):
-        """Busca productos por nombre"""
+        """Busca productos por nombre o referencia"""
         productos = self.obtener_todos_productos()
         resultados = []
-        consulta = consulta.lower()
+        consulta_lower = consulta.lower().strip()
+        
+        # Diccionario de sinónimos para búsqueda más inteligente
+        sinonimos = {
+            'televisor': 'tv',
+            'televisores': 'tv',
+            'tele': 'tv',
+            'nevera': 'refrigera',
+            'refrigerador': 'refrigera',
+            'refri': 'refrigera'
+        }
+        
+        # Reemplazar sinónimos
+        for original, reemplazo in sinonimos.items():
+            if original in consulta_lower:
+                consulta_lower = consulta_lower.replace(original, reemplazo)
+        
+        # Dividir en palabras para búsqueda más flexible
+        palabras_busqueda = consulta_lower.split()
         
         for p in productos:
-            # Asegurar que los campos existen y convertir a string para evitar errores
+            # Buscar en nombre y referencia
             nombre = str(p.get('nombre', '')).lower()
-            desc = str(p.get('descripcion', '')).lower()
+            referencia = str(p.get('referencia', '')).lower()
+            texto_completo = f"{nombre} {referencia}"
             
-            if consulta in nombre or consulta in desc:
+            # Si al menos una palabra de la búsqueda aparece en el producto
+            if any(palabra in texto_completo for palabra in palabras_busqueda):
                 resultados.append(p)
+        
+        print(f"DEBUG: Búsqueda '{consulta}' (normalizado: '{consulta_lower}') encontró {len(resultados)} resultados")
         return resultados
 
     def verificar_stock(self, producto_id):
