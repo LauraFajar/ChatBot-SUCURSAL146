@@ -99,7 +99,7 @@ class Brain:
                     "Sé conciso y usa emojis. El numero de contacto es 3209891720."
                 )
                 response = self.client.models.generate_content(
-                    model='gemini-2.0-flash-exp',
+                    model='gemini-2.0-flash',
                     contents=f"{prompt_sistema}\nUsuario: {mensaje_usuario}"
                 )
                 return response.text
