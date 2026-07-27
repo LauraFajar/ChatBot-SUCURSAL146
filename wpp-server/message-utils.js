@@ -41,22 +41,45 @@ function normalizarTelefono(telefono) {
 }
 
 /**
- * Dado un sufijo (ej: 57300...), genera los 2 formatos de destino que WhatsApp puede
- * necesitar, para intentar enviar por el que funcione.
+ * Dado un sufijo (ej: 57300...), genera los formatos DESTINO para ENVIAR un mensaje
+ * de SALIDA (no para responder uno entrante).
+ *
+ * IMPORTANTE: NO usamos @lid en envíos salientes.
+ * @lid lo asigna WhatsApp de forma INTERNA para cada chat; si lo adivinamos mal
+ * terminamos enviándonos a nosotros mismos (isSendFailure=true) o a un canal/newsletter.
+ * @lid SÓLO se usa al RESPONDER un mensaje entrante: ahí el 'from' ya nos da el @lid correcto.
+ *
  * @param {string} telefono  Número puro o ya formateado
- * @returns {string[]}       Array con 1 o 2 destinos posibles, sin duplicados
+ * @returns {string[]}       Array con destinos válidos (solo @c.us o el que viniera formateado)
  */
 function destinosParaEnviar(telefono) {
   const base = normalizarTelefono(telefono);
   if (!base) return [];
   const sinSufijo = base.split('@')[0];
   if (!sinSufijo) return [base];
-  // Devuelve ambos formatos (@c.us tradicional y @lid multi-device)
-  const cUs = `${sinSufijo}@c.us`;
-  const lid = `${sinSufijo}@lid`;
-  if (base === cUs || base.endsWith('@c.us')) return [cUs, lid];
-  if (base === lid || base.endsWith('@lid')) return [lid, cUs];
-  return [cUs, lid];
+
+  // Si el usuario ya pasó un ID formateado (ej: nos llegó un mensaje con @lid y
+  // queremos responder a ese mismo formato exacto), lo respetamos.
+  if (base.endsWith('@lid') || base.endsWith('@g.us')) return [base];
+
+  // Caso por defecto: envío saliente a número -> solo @c.us.
+  return [`${sinSufijo}@c.us`];
 }
 
-module.exports = { extraerTextoMensaje, normalizarTelefono, destinosParaEnviar };
+/**
+ * Dado el remitente original de un mensaje entrante (from), genera los formatos
+ * para RESPONDER a ESE remitente. AQUÍ SÍ usamos tanto @c.us como @lid si el
+ * mensaje original venía con @lid, o viceversa — porque tenemos certeza del ID.
+ */
+function destinosParaResponder(originalFrom) {
+  if (!originalFrom) return [];
+  const base = normalizarTelefono(originalFrom);
+  if (!base) return [];
+  const sinSufijo = base.split('@')[0];
+  if (!sinSufijo) return [base];
+  if (base.endsWith('@c.us')) return [`${sinSufijo}@c.us`, `${sinSufijo}@lid`];
+  if (base.endsWith('@lid')) return [`${sinSufijo}@lid`, `${sinSufijo}@c.us`];
+  return [base];
+}
+
+module.exports = { extraerTextoMensaje, normalizarTelefono, destinosParaEnviar, destinosParaResponder };

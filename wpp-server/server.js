@@ -46,7 +46,7 @@ let fetchCached = null;
 const wppconnect = require('@wppconnect-team/wppconnect');
 const express = require('express');
 const path = require('path');
-const { extraerTextoMensaje, normalizarTelefono, destinosParaEnviar } = require('./message-utils');
+const { extraerTextoMensaje, normalizarTelefono, destinosParaEnviar, destinosParaResponder } = require('./message-utils');
 
 const app = express();
 app.use(express.json());
@@ -68,8 +68,13 @@ if (process.env.CHROME_PATH) {
 }
 
 function obtenerDestinatarios(mensaje) {
-    const candidatos = [
-        mensaje?.from,
+    // Primero intentamos 'from', ya que es el remitente REAL (y si tiene @lid, queremos
+    // responderle por ese @lid, no adivinar). Para el resto de candidatos (@c.us, id de
+    // chat, etc.) expandimos usando destinosParaResponder solo si el candidato viene formateado.
+    const principal = mensaje?.from;
+    const expandidos = [];
+    if (principal) for (const d of destinosParaResponder(principal)) expandidos.push(d);
+    const secundarios = [
         mensaje?.chatId,
         mensaje?.chat?.id,
         mensaje?.sender?.id,
@@ -77,12 +82,12 @@ function obtenerDestinatarios(mensaje) {
         mensaje?.remoteJid,
         mensaje?.id?.remote,
     ];
-    // Expandimos cada candidato a sus 2 formatos (@c.us y @lid), y luego unicos
-    const expandido = [];
-    for (const c of candidatos.filter(Boolean)) {
-        for (const d of destinosParaEnviar(c)) expandido.push(d);
+    for (const c of secundarios) {
+        if (!c) continue;
+        if (String(c).includes('@')) for (const d of destinosParaResponder(c)) expandidos.push(d);
+        else for (const d of destinosParaEnviar(c)) expandidos.push(d);
     }
-    return [...new Set(expandido)];
+    return [...new Set(expandidos)];
 }
 
 async function intentarEnviarTexto(client, destinatarios, texto) {
@@ -135,6 +140,10 @@ function iniciarBot(client) {
                 console.log(`⏭️  Ignorado (fromMe=true - yo mismo lo escribí): ${telefonoUsuario}`);
                 return;
             }
+            if (mensaje.sender?.isMe === true || mensaje.sender?.formattedName === 'Tú') {
+                console.log(`⏭️  Ignorado: sender.isMe=true / "Tú" (yo soy el destinatario o remitente). from=${mensaje.from}`);
+                return;
+            }
 
             // 2) Ignorar GRUPOS (explicitamente @g.us)
             if (mensaje.isGroupMsg || (mensaje.from && mensaje.from.includes('@g.us'))) {
@@ -148,18 +157,25 @@ function iniciarBot(client) {
                 return;
             }
 
-            // 4) Ignorar NOTIFICACIONES DEL SISTEMA (pero NO @lid)
-            //    ATENCION: Ya NO bloqueamos @lid porque en WhatsApp Multi-Device 2024+
-            //    los chats PRIVADOS 1 a 1 también usan @lid, no solo newsletters.
+            // 4) Ignorar NOTIFICACIONES DEL SISTEMA
             if (['notification_template', 'e2e_notification', 'gp2'].includes(mensaje.type)) {
                 console.log(`⏭️  Ignorado: notificación del sistema (type=${mensaje.type})`);
                 return;
             }
 
-            // 5) Newsletters canales / comunidades (formato newsletter@lid o IDs especiales)
-            if (mensaje.from && (mensaje.from.includes('newsletter@lid') || mensaje.from.startsWith('11') && mensaje.from.includes('@lid') && !mensaje.sender)) {
-                // Newsletter típico: no tiene sender.user real. Si es un user real, vendrá con sender telefónico normal.
-                console.log(`⏭️  Ignorado: newsletter/comunidad (from=${mensaje.from})`);
+            // 5) Newsletters / Canales / Comunidades
+            //    - Formato newsletter@lid explicito
+            //    - Formato 11 + 12 digitos + @lid (comunidades/canales sin telefono real).
+            //      El @lid de usuarios NORMALES suele ser largo (no siempre), pero los IDs
+            //      "newsletter" empiezan por 11 y no tienen "sender" real.
+            if (
+                mensaje.from && (
+                    mensaje.from.includes('newsletter@lid') ||
+                    (mensaje.from.startsWith('11') && mensaje.from.endsWith('@lid') && !mensaje.sender) ||
+                    (mensaje.from.startsWith('11') && mensaje.from.endsWith('@lid') && mensaje.sender?.id && mensaje.sender.id.startsWith('11') && mensaje.sender?.isMe === true)
+                )
+            ) {
+                console.log(`⏭️  Ignorado: newsletter / canal / comunidad (from=${mensaje.from})`);
                 return;
             }
 
@@ -367,14 +383,46 @@ app.post('/debug/probar-envio', async (req, res) => {
     try {
         const destinos = destinosParaEnviar(String(telefono));
         console.log(`🔧 DEBUG: destinos a probar (${destinos.length}):`, destinos.join(', '));
+
+        // ====== DETECCIÓN ANTI-AUTO-ENVÍO (antes de llamar sendText) ======
+        // Obtenemos nuestro propio numero (WPP lo guarda internamente en varios lugares)
+        const miId = String(
+            clienteWpp?.config?.session ||
+            clienteWpp?.wid?._serialized ||
+            clienteWpp?.client?.info?.wid?._serialized ||
+            clienteWpp?.pool?.wid ||
+            ''
+        );
+        let miNumeroSinSufijo = '';
+        if (miId && miId.includes('@')) miNumeroSinSufijo = miId.split('@')[0];
+
+        // También si sendText devuelve sender.isMe=true y sendFailure=true, lo pillamos
         let enviadoOk = false;
         let ultimoResult = null;
         let ultimoErr = null;
         for (const dest of destinos) {
+            const destSinSufijo = dest.includes('@') ? dest.split('@')[0] : dest;
+            if (miNumeroSinSufijo && miNumeroSinSufijo === destSinSufijo) {
+                ultimoErr = new Error(
+                    `🛑 NO PUEDES ENVIAR AL NUMERO DEL PROPIO BOT (${destSinSufijo}). Usa un número DIFERENTE al que escaneaste el QR. Destino=${dest}. Mi ID=${miId}`
+                );
+                console.error('🔧 DEBUG:', ultimoErr.message);
+                continue;
+            }
             try {
                 console.log(`🔧 DEBUG: intentando enviar a ${dest} el mensaje: "${mensaje.slice(0, 60)}"`);
                 ultimoResult = await clienteWpp.sendText(dest, mensaje);
-                console.log(`🔧 DEBUG: sendText(${dest}) OK. sendFailure=${ultimoResult?.isSendFailure} ack=${ultimoResult?.ack}`);
+                console.log(
+                    `🔧 DEBUG: sendText(${dest}) OK. sendFailure=${ultimoResult?.isSendFailure} ack=${ultimoResult?.ack} sender.isMe=${ultimoResult?.sender?.isMe} sender.formattedName=${ultimoResult?.sender?.formattedName}`
+                );
+                if (ultimoResult?.sender?.isMe === true && ultimoResult?.isSendFailure) {
+                    const mensaje =
+                        `🛑 El destinatario ${dest} resultó ser YO MISMO (sender.isMe=true, sendFailure=true). ` +
+                        `No puedes usar debug/probar-envio contra el NÚMERO DEL PROPIO BOT. Usa un número familiar/amigo diferente.`;
+                    console.error('🔧 DEBUG:', mensaje);
+                    ultimoErr = new Error(mensaje);
+                    continue;
+                }
                 if (!ultimoResult?.isSendFailure) {
                     enviadoOk = true;
                     break;
@@ -387,7 +435,7 @@ app.post('/debug/probar-envio', async (req, res) => {
             }
         }
         if (enviadoOk) {
-            return res.json({ ok: true, destinos_probadoss: destinos, result: ultimoResult });
+            return res.json({ ok: true, destinos_probadoss: destinos, mi_id: miId || null, result: ultimoResult });
         }
         return res.status(500).json({
             ok: false,
@@ -396,11 +444,14 @@ app.post('/debug/probar-envio', async (req, res) => {
             stack: (ultimoErr?.stack || '').toString().slice(0, 500),
             ultimo_result: ultimoResult,
             destinos_probadoss: destinos,
+            mi_id: miId || null,
+            mi_numero: miNumeroSinSufijo || null,
             sugerencia: [
                 '1. Verifica que el teléfono destino TENGA WhatsApp y esté activo.',
                 '2. Teléfono debe ser con código país sin ceros a la izquierda: ej 573209891720, NO 0320...',
                 '3. Abre la ventana Chrome de WPPConnect y revisa que WhatsApp Web diga "Conectado".',
-                '4. Si el bot está enviando a SI MISMO: escribe desde OTRO número diferente al vinculado.',
+                '4. NUNCA envies al NÚMERO DEL PROPIO BOT (el que usaste para escanear el QR). Usa OTRO número.',
+                '5. Si estás seguro que es otro número: envía desde Insomnia un GET http://127.0.0.1:3000/estado y pega el JSON.'
             ].join('\n')
         });
     } catch (e) {
