@@ -1,4 +1,44 @@
+# =========================================================================
+# ARCHIVOS Y CARPETAS QUE NUNCA SE SUBEN A GITHUB
+# =========================================================================
+
+# ── Credenciales y datos sensibles ───────────────────────────────────────
 .env
 credenciales_sheets.json
+
+# ── Dependencias Node.js (LA QUE PEDISTE - NO SE SUBEN) ──────────────────
+node_modules/
+wpp-server/node_modules/
+
+# ── Tokens y sesiones de WPPConnect (MUY GRANDES y PRIVADOS) ─────────────
+wpp-server/tokens/
+
+# ── Caches y bytecode Python ─────────────────────────────────────────────
 __pycache__/
 *.pyc
+.pytest_cache/
+.mypy_cache/
+*.egg-info/
+
+# ── Entornos virtuales Python ────────────────────────────────────────────
+venv/
+.venv/
+env/
+ENV/
+
+# ── Datos locales (no se versionan) ──────────────────────────────────────
+data/*.csv
+!data/.gitkeep
+
+# ── Logs ─────────────────────────────────────────────────────────────────
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# ── Editor / OS ──────────────────────────────────────────────────────────
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+

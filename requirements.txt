@@ -6,3 +6,5 @@ oauth2client
 flask
 requests
 twilio
+mysql-connector-python
+pymysql

@@ -5,32 +5,42 @@ def main():
     print("=============================================")
     print("🤖 CHATBOT DE VENTAS (MODO SIMULADOR)")
     print("=============================================")
-    print("Escribe 'salir' para terminar.")
+    print("Escribe 'salir' para terminar o 'inicio' para reiniciar.")
     print("---------------------------------------------")
-    
+
     bot = Brain()
-    
-    if not os.getenv("GEMINI_API_KEY"):
-        print("ℹ️  Tip: Para activar la IA real, crea un archivo .env con GEMINI_API_KEY=tu_clave")
-        print("   Por ahora funcionará en modo 'Reglas Básicas'. Pruebe buscando 'nevera' o 'lavadora'.")
-    
-    print("\nBot: ¡Hola! 👋 Bienvenido a Almacén Oportunidades. Soy tu asistente virtual. ¿Qué estás buscando hoy?\n")
+
+    print("\nBot: ¡Hola! 👋 Escribe '1' o 'nevera' para comenzar las pruebas del flujo.\n")
 
     while True:
         try:
             usuario_input = input("Tú: ")
-            
+
             if usuario_input.lower() in ['salir', 'exit', 'adios']:
                 print("\nBot: ¡Gracias por visitarnos! 👋")
                 break
-                
+
             if not usuario_input.strip():
                 continue
-                
-            respuesta = bot.procesar_mensaje(usuario_input, "TEST_USER")
-            
-            print(f"Bot: {respuesta}\n")
-            
+
+            res = bot.procesar_mensaje(usuario_input, "TEST_USER")
+
+            if isinstance(res, dict):
+                texto = res.get("texto", "")
+                imagenes = res.get("imagenes", [])
+            else:
+                texto = str(res)
+                imagenes = []
+
+            print(f"\nBot: {texto}")
+
+            if imagenes:
+                print("\n📷 [ADJUNTOS ENVIADOS EN EL MENSAJE]:")
+                for idx, img in enumerate(imagenes, 1):
+                    print(f"   🖼️ Imagen {idx}: {img}")
+
+            print("-" * 50 + "\n")
+
         except KeyboardInterrupt:
             print("\nBot: ¡Hasta luego!")
             break
